@@ -1,130 +1,211 @@
-// This is a Node.js backend example for handling push notifications
-// This would need to be hosted on a separate server, not on GitHub Pages
-// GitHub Pages only serves static content
-
+// server.js - Web Push Notification Server
 const express = require('express');
 const webpush = require('web-push');
-const bodyParser = require('body-parser');
 const cors = require('cors');
-const fs = require('fs');
+const bodyParser = require('body-parser');
 const path = require('path');
+const fs = require('fs');
 
+// Create Express app
 const app = express();
-app.use(cors());
+const PORT = process.env.PORT || 3000;
+
+// Configure CORS - this is crucial for GitHub Pages to communicate with your server
+app.use(cors({
+  origin: '*', // For testing, allow all origins
+  methods: ['GET', 'POST'],
+  allowedHeaders: ['Content-Type', 'Authorization']
+}));
+
+// Use body parser for JSON requests
 app.use(bodyParser.json());
 
-// VAPID keys generation
-// Run this once and save the keys
-/*
-const vapidKeys = webpush.generateVAPIDKeys();
-console.log('Public Key:', vapidKeys.publicKey);
-console.log('Private Key:', vapidKeys.privateKey);
-*/
+// VAPID keys provided by you
+const vapidKeys = {
+  publicKey: 'BG1NfrHDgwEIxe4ACqecfs0wB0T2v1DaTE45MgzZU4bovjnGKww8eSv-R8r68W_LmV3WTIzccK01C2FCwM55CLQ',
+  privateKey: '2HrMeZ2iXu2dzRG0J6XMqNZ6ZpH504RSEou9ZpCxALY'
+};
 
-// Your VAPID keys (using the provided keys)
-const publicVapidKey = 'BG1NfrHDgwEIxe4ACqecfs0wB0T2v1DaTE45MgzZU4bovjnGKww8eSv-R8r68W_LmV3WTIzccK01C2FCwM55CLQ';
-const privateVapidKey = '2HrMeZ2iXu2dzRG0J6XMqNZ6ZpH504RSEou9ZpCxALY';
-
+// Configure web-push with your VAPID keys
 webpush.setVapidDetails(
-  'mailto:example@example.com', // Replace with your actual email
-  publicVapidKey,
-  privateVapidKey
+  'mailto:test@example.com', // Change to your email
+  vapidKeys.publicKey,
+  vapidKeys.privateKey
 );
 
-// Store subscriptions (in a real app, use a database)
+// In-memory store for subscriptions (would use a database in production)
 const subscriptions = [];
-const pageVisits = [];
 
-// Endpoint to save subscription
-app.post('/subscribe', (req, res) => {
-  const subscription = req.body.subscription;
-  const pageUrl = req.body.pageUrl;
-  
-  console.log('Subscription received:', subscription);
-  console.log('Page URL:', pageUrl);
-  
-  // Store subscription
-  subscriptions.push(subscription);
-  
-  // Write to file as a simple persistence solution
-  fs.writeFileSync(
-    path.join(__dirname, 'subscriptions.json'),
-    JSON.stringify(subscriptions, null, 2)
-  );
-  
-  res.status(201).json({ message: 'Subscription added successfully' });
-});
-
-// Endpoint to receive page visit data from service worker
-app.post('/pageview', (req, res) => {
-  const data = req.body;
-  console.log('Page visit recorded:', data);
-  
-  // Store page visit
-  pageVisits.push(data);
-  
-  // Write to file
-  fs.writeFileSync(
-    path.join(__dirname, 'pagevisits.json'),
-    JSON.stringify(pageVisits, null, 2)
-  );
-  
-  res.status(200).json({ message: 'Page visit recorded' });
-});
-
-// Endpoint to trigger push notification to all subscribers
-app.post('/send-notification', (req, res) => {
-  const { title, body, url } = req.body;
-  
-  if (!title || !body) {
-    return res.status(400).json({ message: 'Title and body are required' });
-  }
-  
-  const notificationPayload = {
-    title: title,
-    body: body,
-    url: url || 'https://yourusername.github.io/'
+// Create a subscription log to track who subscribes
+const logSubscription = (subscription, origin) => {
+  const logEntry = {
+    endpoint: subscription.endpoint,
+    origin: origin,
+    timestamp: new Date().toISOString()
   };
   
-  // Array of promises for each push notification
-  const sendPromises = subscriptions.map(subscription => {
-    return webpush.sendNotification(
-      subscription,
-      JSON.stringify(notificationPayload)
-    ).catch(error => {
-      console.error('Error sending notification to a subscription:', error);
-      // If the subscription is invalid, we should remove it
-      if (error.statusCode === 410) {
-        // Remove the subscription
-        const index = subscriptions.indexOf(subscription);
-        if (index !== -1) {
-          subscriptions.splice(index, 1);
-        }
-      }
-    });
+  subscriptions.push(logEntry);
+  console.log('New subscription:', logEntry);
+  
+  // Log to a file as well
+  try {
+    const logPath = path.join(__dirname, 'subscription_log.json');
+    let logs = [];
+    
+    if (fs.existsSync(logPath)) {
+      const data = fs.readFileSync(logPath, 'utf8');
+      logs = JSON.parse(data);
+    }
+    
+    logs.push(logEntry);
+    fs.writeFileSync(logPath, JSON.stringify(logs, null, 2));
+  } catch (error) {
+    console.error('Error writing to log file:', error);
+  }
+  
+  return logEntry;
+};
+
+// Routes
+// Serve the VAPID public key
+app.get('/vapidPublicKey', (req, res) => {
+  res.json({ publicKey: vapidKeys.publicKey });
+});
+
+// Subscribe endpoint
+app.post('/subscribe', (req, res) => {
+  const subscription = req.body.subscription;
+  const origin = req.headers.origin || req.body.origin || 'unknown';
+  
+  if (!subscription) {
+    return res.status(400).json({ error: 'Subscription object is required' });
+  }
+  
+  const logEntry = logSubscription(subscription, origin);
+  
+  // Send a test notification immediately for confirmation
+  const payload = JSON.stringify({
+    title: 'Subscription Successful',
+    body: 'You have successfully subscribed to push notifications.',
+    tag: 'welcome',
+    url: origin,
+    timestamp: new Date().toISOString()
   });
   
-  // Execute all push notification promises
-  Promise.all(sendPromises)
+  webpush.sendNotification(subscription, payload)
     .then(() => {
-      // Update the subscriptions file after removing invalid ones
-      fs.writeFileSync(
-        path.join(__dirname, 'subscriptions.json'),
-        JSON.stringify(subscriptions, null, 2)
-      );
-      
-      res.status(200).json({ 
-        message: `Notifications sent to ${subscriptions.length} subscribers` 
+      console.log('Test notification sent successfully');
+      res.status(201).json({ 
+        success: true, 
+        message: 'Subscription successful and test notification sent' 
       });
     })
     .catch(error => {
-      console.error('Error sending notifications:', error);
-      res.status(500).json({ message: 'Error sending notifications' });
+      console.error('Error sending test notification:', error);
+      res.status(201).json({ 
+        success: true, 
+        message: 'Subscription successful but test notification failed',
+        error: error.message
+      });
     });
 });
 
-// Start server
-const PORT = process.env.PORT || 3000;
+// Send a notification to a specific subscription
+app.post('/send-notification', (req, res) => {
+  const { subscription, title, body, tag, url } = req.body;
+  
+  if (!subscription) {
+    return res.status(400).json({ error: 'Subscription object is required' });
+  }
+  
+  const payload = JSON.stringify({
+    title: title || 'New Notification',
+    body: body || 'You have a new notification.',
+    tag: tag || 'default',
+    url: url || '/',
+    timestamp: new Date().toISOString()
+  });
+  
+  webpush.sendNotification(subscription, payload)
+    .then(() => {
+      console.log('Notification sent successfully');
+      res.status(200).json({ success: true });
+    })
+    .catch(error => {
+      console.error('Error sending notification:', error);
+      res.status(500).json({ 
+        error: 'Failed to send notification', 
+        details: error.message 
+      });
+    });
+});
+
+// Endpoint to log navigation events
+app.post('/log-navigation', (req, res) => {
+  const { url, referrer, userAgent, subscriptionEndpoint } = req.body;
+  const timestamp = new Date().toISOString();
+  const origin = req.headers.origin || 'unknown';
+  
+  const logEntry = {
+    url,
+    referrer,
+    userAgent,
+    subscriptionEndpoint,
+    origin,
+    timestamp
+  };
+  
+  console.log('Navigation event:', logEntry);
+  
+  // Log to a file
+  try {
+    const logPath = path.join(__dirname, 'navigation_log.json');
+    let logs = [];
+    
+    if (fs.existsSync(logPath)) {
+      const data = fs.readFileSync(logPath, 'utf8');
+      logs = JSON.parse(data);
+    }
+    
+    logs.push(logEntry);
+    fs.writeFileSync(logPath, JSON.stringify(logs, null, 2));
+    
+    res.status(200).json({ success: true });
+  } catch (error) {
+    console.error('Error writing to log file:', error);
+    res.status(500).json({ error: 'Failed to log navigation' });
+  }
+});
+
+// Get all subscriptions (for testing only - would require authentication in production)
+app.get('/subscriptions', (req, res) => {
+  res.json(subscriptions);
+});
+
+// Get navigation logs (for testing only - would require authentication in production)
+app.get('/navigation-logs', (req, res) => {
+  try {
+    const logPath = path.join(__dirname, 'navigation_log.json');
+    
+    if (!fs.existsSync(logPath)) {
+      return res.json([]);
+    }
+    
+    const data = fs.readFileSync(logPath, 'utf8');
+    const logs = JSON.parse(data);
+    res.json(logs);
+  } catch (error) {
+    console.error('Error reading log file:', error);
+    res.status(500).json({ error: 'Failed to retrieve navigation logs' });
+  }
+});
+
+// Basic health check endpoint
+app.get('/', (req, res) => {
+  res.send('Push Notification Server is running');
+});
+
+// Start the server
 app.listen(PORT, () => {
-  console.log(`Server started on port ${PORT}`);
+  console.log(`Server is running on port ${PORT}`);
 });
