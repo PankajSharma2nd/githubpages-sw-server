@@ -21,12 +21,12 @@ console.log('Public Key:', vapidKeys.publicKey);
 console.log('Private Key:', vapidKeys.privateKey);
 */
 
-// Your VAPID keys (replace with your actual keys)
-const publicVapidKey = 'YOUR_PUBLIC_VAPID_KEY';
-const privateVapidKey = 'YOUR_PRIVATE_VAPID_KEY';
+// Your VAPID keys (using the provided keys)
+const publicVapidKey = 'BG1NfrHDgwEIxe4ACqecfs0wB0T2v1DaTE45MgzZU4bovjnGKww8eSv-R8r68W_LmV3WTIzccK01C2FCwM55CLQ';
+const privateVapidKey = '2HrMeZ2iXu2dzRG0J6XMqNZ6ZpH504RSEou9ZpCxALY';
 
 webpush.setVapidDetails(
-  'mailto:your-email@example.com',
+  'mailto:example@example.com', // Replace with your actual email
   publicVapidKey,
   privateVapidKey
 );
@@ -80,7 +80,7 @@ app.post('/send-notification', (req, res) => {
     return res.status(400).json({ message: 'Title and body are required' });
   }
   
-  const notificationPayload = {a
+  const notificationPayload = {
     title: title,
     body: body,
     url: url || 'https://yourusername.github.io/'
